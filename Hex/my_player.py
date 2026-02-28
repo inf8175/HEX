@@ -1,36 +1,69 @@
+import math
 from player_hex import PlayerHex
 from seahorse.game.action import Action
 from game_state_hex import GameStateHex
-from seahorse.utils.custom_exceptions import MethodNotImplementedError
 
 class MyPlayer(PlayerHex):
-    """
-    Player class for Hex game
-
-    Attributes:
-        piece_type (str): piece type of the player "R" for the first player and "B" for the second player
-    """
-
     def __init__(self, piece_type: str, name: str = "MyPlayer"):
-        """
-        Initialize the PlayerHex instance.
-
-        Args:
-            piece_type (str): Type of the player's game piece
-            name (str, optional): Name of the player (default is "bob")
-        """
         super().__init__(piece_type, name)
+        self.max_depth = 3  # Set your desired search depth here
 
-    def compute_action(self, current_state: GameStateHex, remaining_time: float = 15*60, **kwargs) -> Action:
+    def compute_action(self, current_state: GameStateHex, **kwargs) -> Action:
         """
-        Use the minimax algorithm to choose the best action based on the heuristic evaluation of game states.
-
-        Args:
-            current_state (GameState): The current game state.
-
-        Returns:
-            Action: The best action as determined by minimax.
+        Entry point for the framework.
         """
+        best_val = -math.inf
+        best_action = None
+     
+        for action in current_state.generate_possible_stateless_actions():
+            next_state = current_state.apply_action(action)
+            
+            value = self.minimax(next_state, self.max_depth - 1, -math.inf, math.inf, False)
+            
+            if value > best_val:
+                best_val = value
+                best_action = action
+                
+        return best_action
 
-        #TODO
-        raise MethodNotImplementedError()
+    def minimax(self, state, depth, alpha, beta, is_maximizing):
+        """
+        Recursive minimax with Alpha-Beta pruning.
+        """
+        # 1. Base Case: Check for terminal state (win/loss) or depth limit
+        if state.is_done() or depth == 0:
+            return self.heuristic(state)
+
+        if is_maximizing:
+            max_eval = -math.inf
+            for action in state.generate_possible_stateless_actions():
+                eval = self.minimax(state.apply_action(action), depth - 1, alpha, beta, False)
+                max_eval = max(max_eval, eval)
+                alpha = max(alpha, eval)
+                if beta <= alpha:
+                    break  # Prune
+            return max_eval
+        
+        else:
+            min_eval = math.inf
+            for action in state.generate_possible_stateless_actions():
+                eval = self.minimax(state.apply_action(action), depth - 1, alpha, beta, True)
+                min_eval = min(min_eval, eval)
+                beta = min(beta, eval)
+                if beta <= alpha:
+                    break  # Prune
+            return min_eval
+
+    def heuristic(self, state: GameStateHex) -> float:
+        """
+        Write your heuristic evaluation here. 
+        A positive value favors you (self.piece_type), 
+        a negative value favors the opponent.
+        """
+        if state.is_done():
+            my_score = state.scores.get(self.get_id(), 0)
+            if my_score == 1:
+                return float('inf')
+            return float(-inf)
+            
+        return 0.0
