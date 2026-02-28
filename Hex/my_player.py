@@ -5,7 +5,7 @@ from game_state_hex import GameStateHex
 
 import math
 import random
-from typing import Optional
+import time
 
 
 class MCTSNode:
@@ -64,34 +64,71 @@ class MyPlayer(PlayerHex):
         super().__init__(piece_type, name)
         self._root = None
         self._my_id = None
-        self._n_iterations = 100
+        self._first_move_time = 300
+        self._normal_move_time = 0.5
 
     def compute_action(self, current_state: GameStateHex, remaining_time: float = 15 * 60, **kwargs) -> Action:
         self._my_id = self.get_id()
         
-        self._root = MCTSNode(state=current_state, player_id=None)
-
-        # Run fixed number of MCTS iterations
-        for _ in range(self._n_iterations):
+        # Tree reuse: find current state in existing tree
+        if self._root is not None:
+            found = False
+            for child in self._root.children:
+                if self._states_equal(child.state, current_state):
+                    self._root = child
+                    self._root.parent = None  # Detach to save memory
+                    found = True
+                    break
+            if not found:
+                self._root = None
+        
+        # Create new root if needed
+        if self._root is None:
+            self._root = MCTSNode(state=current_state, player_id=None)
+        
+        # Determine time budget for this move
+        step = current_state.get_step()
+        if step <= 2:  # First two moves (Red plays, then Blue responds)
+            time_budget = min(self._first_move_time, remaining_time * 0.6)
+        else:
+            time_budget = min(self._normal_move_time, remaining_time / 20)
+        
+        # Run MCTS for allocated time
+        start_time = time.time()
+        iterations = 0
+        
+        while time.time() - start_time < time_budget - 0.05:  # Safety margin
             node = self._select(self._root)
             if not node.is_terminal():
                 node = node.expand()
             result = self._simulate(node)
             self._backpropagate(node, result)
+            iterations += 1
+        
+        print(f"Move {step}: {iterations} iterations in {time.time() - start_time:.2f}s, tree size: {self._tree_size(self._root)}")
         
         if not self._root.children:
             actions = list(current_state.get_possible_stateless_actions())
             return random.choice(actions)
         
         best_child = self._root.best_action_node()
-        self._root = best_child
+        self._root = best_child  # Set up for next move reuse
         self._root.parent = None
         return best_child.action
-
+    
     def _states_equal(self, s1: GameStateHex, s2: GameStateHex) -> bool:
         if s1.get_step() != s2.get_step():
             return False
         return s1.get_rep().get_env() == s2.get_rep().get_env()
+
+    def _tree_size(self, node):
+        """Count nodes in tree (for debugging)"""
+        if node is None:
+            return 0
+        count = 1
+        for child in node.children:
+            count += self._tree_size(child)
+        return count
 
     def _select(self, node: MCTSNode) -> MCTSNode:
         while not node.is_terminal():
