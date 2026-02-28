@@ -140,23 +140,56 @@ class MyPlayer(PlayerHex):
     def _simulate(self, node: MCTSNode) -> float:
         state = node.state
         my_id = self._my_id
-        steps = 0
-        
+
         while not state.is_done():
             actions = list(state.get_possible_stateless_actions())
-            if not actions:
-                break
-            
-            action = random.choice(actions)
-            
+
+            # 50% random, 50% heuristic-guided
+            if random.random() < 0.5:
+                action = random.choice(actions)
+            else:
+                action = self._biased_select(state, actions)
+
             state = state.apply_action(action)
-            steps += 1
+
+        return 1.0 if state.scores[my_id] > 0 else 0.0
+
+    def _biased_select(self, state, actions):
+        """Prefer moves near existing pieces (creates connected groups)"""
+        env = state.get_rep().get_env()
+        my_type = self.get_piece_type()
         
-        scores = state.scores
-        if scores[my_id] > 0:
-            return 1.0
-        else:
-            return 0.0
+        # Score each action by number of adjacent friendly pieces
+        scored = []
+        for action in actions:
+            pos = action.data["position"]
+            score = 0
+            
+            # Check 6 neighbors
+            for _, (ptype, _) in state.get_neighbours(pos[0], pos[1]).items():
+                if ptype == my_type:
+                    score += 2  # Adjacent to my piece
+                elif ptype != "EMPTY":
+                    score += 1  # Adjacent to opponent (blocking)
+            
+            scored.append((score, action))
+        
+        # Sort by score only (use key to avoid comparing actions)
+        scored.sort(key=lambda x: x[0], reverse=True)
+        
+        # Pick from top 3 weighted by score
+        top = scored[:3]
+        weights = [max(1, s) for s, _ in top]
+        total = sum(weights)
+        r = random.uniform(0, total)
+        
+        cumsum = 0
+        for w, action in top:
+            cumsum += w
+            if r <= cumsum:
+                return action
+        
+        return top[0][1]
 
     def _backpropagate(self, node: MCTSNode, result: float):
         while node is not None:
