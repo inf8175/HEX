@@ -3,6 +3,7 @@ from heapq import heappush, heappop
 from player_hex import PlayerHex
 from seahorse.game.action import Action
 from game_state_hex import GameStateHex
+from seahorse.game.stateless_action import StatelessAction
 
 HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 
@@ -18,8 +19,8 @@ class MyPlayer(PlayerHex):
 
     def __init__(self, piece_type: str, name: str = "MyPlayer"):
         super().__init__(piece_type, name)
-        self._max_depth = 4
-        self._search_width = 6
+        self._max_depth = 2
+        self._search_width = 2
         self._board_dim = 14
         self._opp_type = "B" if piece_type == "R" else "R"
 
@@ -28,8 +29,20 @@ class MyPlayer(PlayerHex):
     # ------------------------------------------------------------------ #
 
     def compute_action(self, current_state: GameStateHex, **kwargs) -> Action:
+        
+        # Hardcoded opening
+        if current_state.get_step() == 0 or current_state.get_step() == 1:
+            for action in current_state.generate_possible_stateless_actions():
+                if action.data["position"] == (6, 7) or action.data["position"] == (6, 6):
+                    return action
+
         best_val = -math.inf
         best_action = None
+
+        # Guaranteed fallback: first available action
+        for action in current_state.generate_possible_stateless_actions():
+            best_action = action
+            break
 
         candidates = self._get_candidates(current_state, is_maximizing=True)
 
@@ -75,25 +88,22 @@ class MyPlayer(PlayerHex):
     # ------------------------------------------------------------------ #
 
     def _get_candidates(self, state: GameStateHex, is_maximizing: bool):
-        """
-        1. Compute considered tiles (radius-2 around all placed pieces).
-        2. Filter framework-generated actions to only considered tiles.
-        3. Evaluate heuristic on each resulting state.
-        4. Sort best-first (maximizer: high to low, minimizer: low to high).
-        5. Trim to search_width.
-
-        Falls back to all actions on empty board.
-        """
         considered = self._get_considered_tiles(state)
         scored = []
 
         for action in state.generate_possible_stateless_actions():
-            # On empty board considered is empty so we take everything
             if considered and action.data["position"] not in considered:
                 continue
             next_state = state.apply_action(action)
             h_val = self.heuristic(next_state)
             scored.append((action, next_state, h_val))
+
+        # Fallback: if filtering left nothing, take all actions
+        if not scored:
+            for action in state.generate_possible_stateless_actions():
+                next_state = state.apply_action(action)
+                h_val = self.heuristic(next_state)
+                scored.append((action, next_state, h_val))
 
         scored.sort(key=lambda x: x[2], reverse=is_maximizing)
         return scored[:self._search_width]
@@ -131,9 +141,9 @@ class MyPlayer(PlayerHex):
             my_score = state.scores.get(self.get_id(), 0)
             return float('inf') if my_score == 1 else float('-inf')
 
-        w_aggressive = 0.5
-        w_defensive  = 0.3
-        w_connective = 0.2
+        w_aggressive = 0.4
+        w_defensive  = 0.45
+        w_connective = 0.15
 
         agg  = self._aggressive_score(state)
         defe = self._defensive_score(state)
@@ -240,6 +250,3 @@ class MyPlayer(PlayerHex):
                     heappush(heap, (new_dist, (ni, nj)))
 
         return math.inf
-
-    def to_json(self) -> dict:
-        return {}
