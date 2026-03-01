@@ -19,8 +19,8 @@ class MyPlayer(PlayerHex):
 
     def __init__(self, piece_type: str, name: str = "MyPlayer"):
         super().__init__(piece_type, name)
-        self._max_depth = 2
-        self._search_width = 2
+        self._max_depth = 4
+        self._search_width = 5
         self._board_dim = 14
         self._opp_type = "B" if piece_type == "R" else "R"
 
