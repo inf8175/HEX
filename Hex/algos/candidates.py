@@ -1,24 +1,30 @@
 """
 Candidate generation module for Hex AI player.
 Handles considered tiles computation and move candidate selection.
+
+Fix: ring-2 expansion now computed directly from the source tile, not
+from r1. Previously r2 was computed from r1 which caused near-edge tiles
+to generate r2 candidates on the opposite side of the board (portal bug).
 """
 
 import math
 from heapq import heappush, heappop
 from game_state_hex import GameStateHex
 
-HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
+HEX_NEIGHBORS  = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
+BRIDGE_OFFSETS = [(-1, 2), (1, 1), (2, -1), (1, -2), (-1, -1), (-2, 1)]
+
 
 class CandidateGenerator:
     """
     Generates and ranks candidate moves for the minimax search.
 
     Strategy:
-    - Expands radius-2 around own pieces (aggressive + connective moves)
-    - Expands radius-1 around threatening opponent pieces (defensive moves)
-    - Always includes cells on the opponent's shortest path (critical blocks)
-    - Filters and sorts candidates by heuristic value
-    - Trims to search_width
+    - Ring 1+2 around own pieces              (aggressive + connective)
+    - Bridge offsets around own pieces         (virtual connection awareness)
+    - Ring 1+2 around threatening opp pieces   (defensive)
+    - Bridge offsets around threatening opp    (block opponent virtual connections)
+    - Cells on opponent's shortest path        (critical blocks)
     """
 
     def __init__(self, piece_type: str, board_dim: int = 14, search_width: int = 6):
@@ -28,7 +34,7 @@ class CandidateGenerator:
         self._search_width = search_width
 
     # ------------------------------------------------------------------ #
-    #  PUBLIC                                                            #
+    #  PUBLIC                                                              #
     # ------------------------------------------------------------------ #
 
     def get_candidates(self, state: GameStateHex, heuristic_fn, is_maximizing: bool):
@@ -37,7 +43,7 @@ class CandidateGenerator:
 
         Args:
             state:          Current game state.
-            heuristic_fn:   Callable(state) -> float, used to score each candidate.
+            heuristic_fn:   Callable(state) -> float.
             is_maximizing:  True = sort highest first, False = sort lowest first.
 
         Returns:
@@ -53,6 +59,7 @@ class CandidateGenerator:
             h_val = heuristic_fn(next_state)
             scored.append((action, next_state, h_val))
 
+        # Fallback: if filtering left nothing, use all available actions
         if not scored:
             for action in state.generate_possible_stateless_actions():
                 next_state = state.apply_action(action)
@@ -68,49 +75,69 @@ class CandidateGenerator:
 
     def _get_considered_tiles(self, state: GameStateHex) -> set:
         """
-        Enhanced candidate generator that recognizes:
-        - Standard neighborhood expansion (R1+R2)
-        - Bridge formation (Virtual Connections)
-        - Bridge interference (Blocking opponent virtual connections)
-        - Critical shortest path intercepts
+        Compute relevant candidate positions.
+
+        Ring-2 is always computed directly from the source tile (not from r1)
+        to avoid the 'portal bug' where near-edge tiles generated candidates
+        on the opposite side of the board.
         """
         considered = set()
         env = state.rep.env
 
-        BRIDGE_OFFSETS = [(-1, 2), (1, 1), (2, -1), (1, -2), (-1, -1), (-2, 1)]
-
         my_tiles  = [t for t, p in env.items() if p.get_type() == self._piece_type]
         opp_tiles = [t for t, p in env.items() if p.get_type() == self._opp_type]
 
+        # --- OWN PIECES ---
         for tile in my_tiles:
+            # Ring 1
             for di, dj in HEX_NEIGHBORS:
                 r1 = (tile[0] + di, tile[1] + dj)
                 if self._in_bounds(r1) and r1 not in env:
                     considered.add(r1)
-                    for di2, dj2 in HEX_NEIGHBORS:
-                        r2 = (r1[0] + di2, r1[1] + dj2)
-                        if self._in_bounds(r2) and r2 not in env:
-                            considered.add(r2)
 
+            # Ring 2 — computed directly from tile, NOT chained from r1
+            for di, dj in HEX_NEIGHBORS:
+                for di2, dj2 in HEX_NEIGHBORS:
+                    r2 = (tile[0] + di + di2, tile[1] + dj + dj2)
+                    if self._in_bounds(r2) and r2 not in env:
+                        considered.add(r2)
+
+            # Bridge offsets — virtual connection cells
             for bi, bj in BRIDGE_OFFSETS:
-                b_tile = (tile[0] + bi, tile[1] + bj)
-                if self._in_bounds(b_tile) and b_tile not in env:
-                    considered.add(b_tile)
+                b = (tile[0] + bi, tile[1] + bj)
+                if self._in_bounds(b) and b not in env:
+                    considered.add(b)
 
+        # --- THREATENING OPPONENT PIECES ---
         for tile in opp_tiles:
-            if self._is_threatening(tile, env):
-                for di, dj in HEX_NEIGHBORS:
-                    r1 = (tile[0] + di, tile[1] + dj)
-                    if self._in_bounds(r1) and r1 not in env:
-                        considered.add(r1)
+            if not self._is_threatening(tile, env):
+                continue
 
-                for bi, bj in BRIDGE_OFFSETS:
-                    b_tile = (tile[0] + bi, tile[1] + bj)
-                    if self._in_bounds(b_tile) and b_tile not in env:
-                        considered.add(b_tile)
+            # Ring 1
+            for di, dj in HEX_NEIGHBORS:
+                r1 = (tile[0] + di, tile[1] + dj)
+                if self._in_bounds(r1) and r1 not in env:
+                    considered.add(r1)
 
+            # Ring 2 — same fix, computed directly from tile
+            for di, dj in HEX_NEIGHBORS:
+                for di2, dj2 in HEX_NEIGHBORS:
+                    r2 = (tile[0] + di + di2, tile[1] + dj + dj2)
+                    if self._in_bounds(r2) and r2 not in env:
+                        considered.add(r2)
+
+            # Bridge offsets around opponent — block their virtual connections
+            for bi, bj in BRIDGE_OFFSETS:
+                b = (tile[0] + bi, tile[1] + bj)
+                if self._in_bounds(b) and b not in env:
+                    considered.add(b)
+
+        # --- OPPONENT SHORTEST PATH CELLS ---
+        # Always include cells on the opponent's shortest path.
+        # Guarantees critical blocking moves are never pruned away.
         considered |= self._get_shortest_path_cells(state, self._opp_type)
 
+        # --- FALLBACK: empty board ---
         center = (self._board_dim // 2, self._board_dim // 2)
         if not considered and center not in env:
             considered.add(center)
@@ -119,11 +146,10 @@ class CandidateGenerator:
 
     def _is_threatening(self, tile, env) -> bool:
         """
-        An opponent piece is threatening if:
-        - It touches the opponent's goal edge, OR
-        - It is connected to another opponent piece, OR
-        - It is in the middle zone of the board (rows/cols 3 to dim-3)
-          meaning it is advanced enough to matter even if isolated
+        Opponent piece is threatening if:
+        - Touches its goal edge, OR
+        - Connected to another opponent piece, OR
+        - In the mid-board zone (rows/cols 3 to dim-3)
         """
         if self._opp_type == "R":
             if tile[0] == 0 or tile[0] == self._board_dim - 1:
@@ -152,10 +178,8 @@ class CandidateGenerator:
 
     def _get_shortest_path_cells(self, state: GameStateHex, piece_type: str) -> set:
         """
-        Returns the set of EMPTY cells that lie on the opponent's shortest path.
-        These are always critical blocking candidates regardless of proximity
-        to existing pieces, fixing the bug where the agent ignores a clear
-        opponent run toward the goal.
+        Returns empty cells on the opponent's Dijkstra shortest path.
+        These are always critical blocking candidates.
         """
         dim = self._board_dim
         env = state.rep.env

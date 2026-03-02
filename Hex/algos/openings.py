@@ -25,28 +25,21 @@ class Openings:
             return None
 
         if self._piece_type == "R":
-            # Red connects top to bottom — extend vertically through center
-            # Move sequence: anchor center, then push toward top and bottom edges
             sequence = [
-                (6, 7),   # center anchor
-                (4, 7),   # push toward top
-                (9, 7),   # push toward bottom
+                (6, 7),
+                (7, 7),
             ]
         else:
-            # Blue connects left to right — extend horizontally through center
             sequence = [
-                (7, 6),   # center anchor
-                (7, 4),   # push toward left
-                (7, 9),   # push toward right
+                (7, 6),  
+                (7, 7),   
             ]
 
-        # Pick the next move in sequence that isn't already occupied
         for move in sequence:
             if move not in self._my_moves:
                 self._my_moves.append(move)
                 return move
 
-        # Sequence exhausted
         self._in_opening = False
         return None
 

@@ -19,11 +19,12 @@ immediately drops everything to block a winning threat.
 import math
 from heapq import heappush, heappop
 from game_state_hex import GameStateHex
+import numpy as np
 
 HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 
 
-class HexHeuristic:
+class HexHeuristicDjikstra:
     """
     Evaluates a Hex board position as:
 
