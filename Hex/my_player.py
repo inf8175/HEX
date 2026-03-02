@@ -3,7 +3,11 @@ from heapq import heappush, heappop
 from player_hex import PlayerHex
 from seahorse.game.action import Action
 from game_state_hex import GameStateHex
-from seahorse.game.stateless_action import StatelessAction
+
+import os
+import csv
+import time
+from datetime import datetime
 
 HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 
@@ -20,15 +24,20 @@ class MyPlayer(PlayerHex):
     def __init__(self, piece_type: str, name: str = "MyPlayer"):
         super().__init__(piece_type, name)
         self._max_depth = 4
-        self._search_width = 5
+        self._search_width = 6
         self._board_dim = 14
+        self._iteration = 0
+        os.makedirs("./benchmarks", exist_ok=True)
+        self._timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._opp_type = "B" if piece_type == "R" else "R"
 
     # ------------------------------------------------------------------ #
-    #  ENTRY POINT                                                         #
+    #  ENTRY POINT                                                       #
     # ------------------------------------------------------------------ #
 
     def compute_action(self, current_state: GameStateHex, **kwargs) -> Action:
+
+        start_time = time.perf_counter()
         
         # Hardcoded opening
         if current_state.get_step() == 0 or current_state.get_step() == 1:
@@ -52,7 +61,32 @@ class MyPlayer(PlayerHex):
                 best_val = value
                 best_action = action
 
+        self._log_time(start_time)
         return best_action
+    
+    def _log_time(self, start_time):
+       elapsed = time.perf_counter() - start_time
+       self._iteration += 1
+
+       filename = (
+           f"benchmark_depth_{self._max_depth}"
+           f"_width_{self._search_width}"
+           f"_{self._timestamp}.csv"
+       )
+
+       filepath = os.path.join("benchmarks", filename)
+
+       os.makedirs("benchmarks", exist_ok=True)
+
+       file_exists = os.path.isfile(filepath)
+
+       with open(filepath, "a", newline="") as f:
+           writer = csv.writer(f)
+
+           if not file_exists:
+               writer.writerow(["iteration", "seconds"])
+
+           writer.writerow([self._iteration, elapsed])
 
     # ------------------------------------------------------------------ #
     #  MINIMAX WITH ALPHA-BETA                                             #
@@ -98,13 +132,6 @@ class MyPlayer(PlayerHex):
             h_val = self.heuristic(next_state)
             scored.append((action, next_state, h_val))
 
-        # Fallback: if filtering left nothing, take all actions
-        if not scored:
-            for action in state.generate_possible_stateless_actions():
-                next_state = state.apply_action(action)
-                h_val = self.heuristic(next_state)
-                scored.append((action, next_state, h_val))
-
         scored.sort(key=lambda x: x[2], reverse=is_maximizing)
         return scored[:self._search_width]
 
@@ -141,9 +168,9 @@ class MyPlayer(PlayerHex):
             my_score = state.scores.get(self.get_id(), 0)
             return float('inf') if my_score == 1 else float('-inf')
 
-        w_aggressive = 0.4
-        w_defensive  = 0.45
-        w_connective = 0.15
+        w_aggressive = 0.5
+        w_defensive  = 0.3
+        w_connective = 0.2
 
         agg  = self._aggressive_score(state)
         defe = self._defensive_score(state)
