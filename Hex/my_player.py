@@ -4,6 +4,10 @@ from player_hex import PlayerHex
 from seahorse.game.action import Action
 from game_state_hex import GameStateHex
 
+from algos.heuristics import HexHeuristic
+from algos.candidates import CandidateGenerator
+from algos.openings import Openings
+
 import os
 import csv
 import time
@@ -30,67 +34,63 @@ class MyPlayer(PlayerHex):
         os.makedirs("./benchmarks", exist_ok=True)
         self._timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._opp_type = "B" if piece_type == "R" else "R"
-
-    # ------------------------------------------------------------------ #
-    #  ENTRY POINT                                                       #
-    # ------------------------------------------------------------------ #
+        self._heuristic = HexHeuristic(piece_type, board_dim=14)
+        self._candidates = CandidateGenerator(piece_type, board_dim=14, search_width=self._search_width)
+        self._opening_book = Openings(piece_type)
+        self._last_opponent_move = None
+        self._prev_positions = set()
 
     def compute_action(self, current_state: GameStateHex, **kwargs) -> Action:
-
         start_time = time.perf_counter()
+        self._track_opponent_move(current_state)
         
-        # Hardcoded opening
-        if current_state.get_step() == 0 or current_state.get_step() == 1:
-            for action in current_state.generate_possible_stateless_actions():
-                if action.data["position"] == (6, 7) or action.data["position"] == (6, 6):
-                    return action
-
-        best_val = -math.inf
-        best_action = None
-
-        # Guaranteed fallback: first available action
+        opening_action = self._try_opening(current_state)
+        if opening_action is not None:
+            self._log_time(start_time)
+            return opening_action
+    
+        best_action = self._run_minimax(current_state)
+        self._log_time(start_time)
+        return best_action
+    
+    def _track_opponent_move(self, current_state: GameStateHex):
+        """Update prev_positions and detect opponent's last move."""
+        step = current_state.get_step()
+        current_pos = set(current_state.rep.env.keys())
+        if step > 0:
+            new_pos = current_pos - self._prev_positions
+            self._last_opponent_move = new_pos.pop() if new_pos else None
+        self._prev_positions = current_pos
+    
+    def _try_opening(self, current_state: GameStateHex):
+        """
+        Check opening book for a prepared move.
+        Returns the action if found, None otherwise.
+        """
+        step = current_state.get_step()
+        opening_move = self._opening_book.get_opening_move(step, self._last_opponent_move)
+        if opening_move is None:
+            return None
         for action in current_state.generate_possible_stateless_actions():
-            best_action = action
-            break
-
-        candidates = self._get_candidates(current_state, is_maximizing=True)
-
-        for action, next_state, _ in candidates:
+            if action.data["position"] == opening_move:
+                return action
+        return None
+    
+    def _run_minimax(self, current_state: GameStateHex) -> Action:
+        """
+        Run minimax search and return the best action found.
+        Guaranteed to return something via the fallback.
+        """
+        best_action = next(current_state.generate_possible_stateless_actions(), None)
+        best_val = -math.inf
+    
+        for action, next_state, _ in self._get_candidates(current_state, is_maximizing=True):
             value = self.minimax(next_state, self._max_depth - 1, -math.inf, math.inf, False)
             if value > best_val:
                 best_val = value
                 best_action = action
-
-        self._log_time(start_time)
-        return best_action
     
-    def _log_time(self, start_time):
-       elapsed = time.perf_counter() - start_time
-       self._iteration += 1
-
-       filename = (
-           f"benchmark_depth_{self._max_depth}"
-           f"_width_{self._search_width}"
-           f"_{self._timestamp}.csv"
-       )
-
-       filepath = os.path.join("benchmarks", filename)
-
-       os.makedirs("benchmarks", exist_ok=True)
-
-       file_exists = os.path.isfile(filepath)
-
-       with open(filepath, "a", newline="") as f:
-           writer = csv.writer(f)
-
-           if not file_exists:
-               writer.writerow(["iteration", "seconds"])
-
-           writer.writerow([self._iteration, elapsed])
-
-    # ------------------------------------------------------------------ #
-    #  MINIMAX WITH ALPHA-BETA                                             #
-    # ------------------------------------------------------------------ #
+        return best_action
 
     def minimax(self, state: GameStateHex, depth: int, alpha: float, beta: float, is_maximizing: bool) -> float:
         if state.is_done() or depth == 0:
@@ -116,164 +116,33 @@ class MyPlayer(PlayerHex):
                 if beta <= alpha:
                     break
             return min_eval
-
-    # ------------------------------------------------------------------ #
-    #  CANDIDATE GENERATION                                                #
-    # ------------------------------------------------------------------ #
-
-    def _get_candidates(self, state: GameStateHex, is_maximizing: bool):
-        considered = self._get_considered_tiles(state)
-        scored = []
-
-        for action in state.generate_possible_stateless_actions():
-            if considered and action.data["position"] not in considered:
-                continue
-            next_state = state.apply_action(action)
-            h_val = self.heuristic(next_state)
-            scored.append((action, next_state, h_val))
-
-        scored.sort(key=lambda x: x[2], reverse=is_maximizing)
-        return scored[:self._search_width]
-
-    def _get_considered_tiles(self, state: GameStateHex) -> set:
-        """
-        Radius-2 expansion around every placed piece.
-        Computed fresh at each node so branches don't contaminate each other.
-        Only includes empty cells within board bounds.
-        """
-        considered = set()
-        env = state.rep.env
-
-        for tile in env.keys():
-            for di, dj in HEX_NEIGHBORS:
-                r1 = (tile[0] + di, tile[1] + dj)
-                if self._in_bounds(r1) and r1 not in env:
-                    considered.add(r1)
-                for di2, dj2 in HEX_NEIGHBORS:
-                    r2 = (r1[0] + di2, r1[1] + dj2)
-                    if self._in_bounds(r2) and r2 not in env:
-                        considered.add(r2)
-
-        return considered
-
-    def _in_bounds(self, tile) -> bool:
-        return 0 <= tile[0] < self._board_dim and 0 <= tile[1] < self._board_dim
-
-    # ------------------------------------------------------------------ #
-    #  COMBINED HEURISTIC                                                  #
-    # ------------------------------------------------------------------ #
+    
+    def _get_candidates(self, state, is_maximizing):
+        return self._candidates.get_candidates(state, self.heuristic, is_maximizing)
 
     def heuristic(self, state: GameStateHex) -> float:
-        if state.is_done():
-            my_score = state.scores.get(self.get_id(), 0)
-            return float('inf') if my_score == 1 else float('-inf')
+        return self._heuristic.evaluate(state)
 
-        w_aggressive = 0.5
-        w_defensive  = 0.3
-        w_connective = 0.2
+    def _log_time(self, start_time):
+       elapsed = time.perf_counter() - start_time
+       self._iteration += 1
 
-        agg  = self._aggressive_score(state)
-        defe = self._defensive_score(state)
-        conn = self._connective_score(state)
+       filename = (
+           f"benchmark_depth_{self._max_depth}"
+           f"_width_{self._search_width}"
+           f"_{self._timestamp}.csv"
+       )
 
-        return w_aggressive * agg + w_defensive * defe + w_connective * conn
+       filepath = os.path.join("benchmarks", filename)
 
-    # ------------------------------------------------------------------ #
-    #  HEURISTIC 1 - AGGRESSIVE                                            #
-    #  Shortest path for YOU. Score in [0,1]: 1 = already connected.      #
-    # ------------------------------------------------------------------ #
+       os.makedirs("benchmarks", exist_ok=True)
 
-    def _aggressive_score(self, state: GameStateHex) -> float:
-        dist = self._dijkstra(state, self.piece_type)
-        if dist == 0:
-            return 1.0
-        if dist == math.inf:
-            return 0.0
-        return 1.0 - (dist / self._board_dim)
+       file_exists = os.path.isfile(filepath)
 
-    # ------------------------------------------------------------------ #
-    #  HEURISTIC 2 - DEFENSIVE                                             #
-    #  Shortest path for OPPONENT. Score in [0,1]: 1 = fully blocked.     #
-    # ------------------------------------------------------------------ #
+       with open(filepath, "a", newline="") as f:
+           writer = csv.writer(f)
 
-    def _defensive_score(self, state: GameStateHex) -> float:
-        dist = self._dijkstra(state, self._opp_type)
-        if dist == math.inf:
-            return 1.0
-        if dist == 0:
-            return 0.0
-        return dist / self._board_dim
+           if not file_exists:
+               writer.writerow(["iteration", "seconds"])
 
-    # ------------------------------------------------------------------ #
-    #  HEURISTIC 3 - CONNECTIVE                                            #
-    #  Fraction of YOUR pieces with at least one friendly neighbor.        #
-    #  Score in [0,1]: 1 = all pieces connected to at least one other.    #
-    # ------------------------------------------------------------------ #
-
-    def _connective_score(self, state: GameStateHex) -> float:
-        my_pieces = [
-            tile for tile, piece in state.rep.env.items()
-            if piece.get_type() == self.piece_type
-        ]
-
-        if not my_pieces:
-            return 0.0
-
-        connected_count = 0
-        for tile in my_pieces:
-            for di, dj in HEX_NEIGHBORS:
-                neighbor = (tile[0] + di, tile[1] + dj)
-                if (neighbor in state.rep.env
-                        and state.rep.env[neighbor].get_type() == self.piece_type):
-                    connected_count += 1
-                    break  # count each piece at most once
-
-        return connected_count / len(my_pieces)
-
-    # ------------------------------------------------------------------ #
-    #  DIJKSTRA                                                            #
-    #  Own pieces cost 0, empty cells cost 1, opponent = impassable.      #
-    # ------------------------------------------------------------------ #
-
-    def _dijkstra(self, state: GameStateHex, piece_type: str) -> float:
-        dim = self._board_dim
-        env = state.rep.env
-        dist = {}
-        heap = []
-
-        if piece_type == "R":
-            seeds = [(0, j) for j in range(dim)]
-            goal_check = lambda i, j: i == dim - 1
-        else:
-            seeds = [(i, 0) for i in range(dim)]
-            goal_check = lambda i, j: j == dim - 1
-
-        for tile in seeds:
-            cell = env.get(tile)
-            if cell is not None and cell.get_type() != piece_type:
-                continue
-            cost = 0 if (cell is not None) else 1
-            if cost < dist.get(tile, math.inf):
-                dist[tile] = cost
-                heappush(heap, (cost, tile))
-
-        while heap:
-            d, (i, j) = heappop(heap)
-            if d > dist.get((i, j), math.inf):
-                continue
-            if goal_check(i, j):
-                return d
-            for di, dj in HEX_NEIGHBORS:
-                ni, nj = i + di, j + dj
-                if not (0 <= ni < dim and 0 <= nj < dim):
-                    continue
-                cell = env.get((ni, nj))
-                if cell is not None and cell.get_type() != piece_type:
-                    continue
-                step = 0 if (cell is not None) else 1
-                new_dist = d + step
-                if new_dist < dist.get((ni, nj), math.inf):
-                    dist[(ni, nj)] = new_dist
-                    heappush(heap, (new_dist, (ni, nj)))
-
-        return math.inf
+           writer.writerow([self._iteration, elapsed])
