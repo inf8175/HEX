@@ -121,14 +121,7 @@ class MyPlayer(PlayerHex):
         return self._candidates.get_candidates(state, self.heuristic, is_maximizing)
 
     def heuristic(self, state):
-        key = hash(frozenset((t, p.get_type()) for t, p in state.rep.env.items()))
-        if key in self._tt:
-            self._tt_hits += 1
-            return self._tt[key]
-        self._tt_misses += 1
-        val = self._heuristic.evaluate(state)
-        self._tt[key] = val
-        return val
+        return self._heuristic.evaluate(state)
 
     def _log_time(self, start_time):
        elapsed = time.perf_counter() - start_time
