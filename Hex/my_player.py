@@ -4,6 +4,8 @@ from player_hex import PlayerHex
 from seahorse.game.action import Action
 from game_state_hex import GameStateHex
 
+from colorama import Fore, Back, Style
+
 from algos.heuristics import HexHeuristic
 from algos.candidates import CandidateGenerator
 from algos.openings import Openings
@@ -14,6 +16,7 @@ import time
 from datetime import datetime
 
 HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
+DEBUG = False
 
 class MyPlayer(PlayerHex):
     """
@@ -26,8 +29,8 @@ class MyPlayer(PlayerHex):
 
     def __init__(self, piece_type: str, name: str = "MyPlayer"):
         super().__init__(piece_type, name)
-        self._max_depth = 3
-        self._search_width = 9
+        self._max_depth = 4
+        self._search_width = 12
         self._board_dim = 14
         self._iteration = 0
         os.makedirs("./benchmarks", exist_ok=True)
@@ -47,6 +50,10 @@ class MyPlayer(PlayerHex):
         if opening_action is not None:
             self._log_time(start_time)
             return opening_action
+        
+        if DEBUG:
+            considered_set = self._candidates._get_considered_tiles(current_state)
+            self.debug_print_candidates(current_state, considered_set)
     
         best_action = self._run_minimax(current_state)
 
@@ -63,10 +70,6 @@ class MyPlayer(PlayerHex):
         self._prev_positions = current_pos
     
     def _try_opening(self, current_state: GameStateHex):
-        """
-        Check opening book for a prepared move.
-        Returns the action if found, None otherwise.
-        """
         step = current_state.get_step()
         opening_move = self._opening_book.get_opening_move(step, self._last_opponent_move)
         if opening_move is None:
@@ -74,6 +77,7 @@ class MyPlayer(PlayerHex):
         for action in current_state.generate_possible_stateless_actions():
             if action.data["position"] == opening_move:
                 return action
+        self._opening_book._in_opening = False
         return None
     
     def _run_minimax(self, current_state: GameStateHex) -> Action:
@@ -146,3 +150,35 @@ class MyPlayer(PlayerHex):
                writer.writerow(["iteration", "seconds"])
 
            writer.writerow([self._iteration, elapsed])
+
+    def debug_print_candidates(self, state: GameStateHex, candidates_set: set):
+        """
+        Prints the board with candidate moves highlighted in Purple.
+        """
+        env = state.rep.env
+        dim = state.rep.dimensions
+
+        # Purple ANSI codes (some consoles prefer Magenta for Purple)
+        PURPLE = '\033[95m'
+        RESET = Style.RESET_ALL
+
+        print("\n--- DEBUG: CANDIDATE TILES (Purple) ---")
+        for i in range(dim[0]):
+            # The 'Hex Slant'
+            print(" " * i, end="")
+            for j in range(dim[1]):
+                pos = (i, j)
+                if pos in env:
+                    # Existing pieces
+                    char = "⬢"
+                    color = Fore.RED if env[pos].get_type() == "R" else Fore.BLUE
+                    print(f"{color}{char}{RESET} ", end="")
+                elif pos in candidates_set:
+                    # THIS IS A CANDIDATE
+                    # Using '?' or 'c' to represent a considered tile
+                    print(f"{PURPLE}c{RESET} ", end="")
+                else:
+                    # Empty but not considered
+                    print(". ", end="")
+            print()  # Newline
+        print("---------------------------------------\n")

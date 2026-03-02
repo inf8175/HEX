@@ -9,7 +9,6 @@ from game_state_hex import GameStateHex
 
 HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 
-
 class CandidateGenerator:
     """
     Generates and ranks candidate moves for the minimax search.
@@ -29,7 +28,7 @@ class CandidateGenerator:
         self._search_width = search_width
 
     # ------------------------------------------------------------------ #
-    #  PUBLIC                                                              #
+    #  PUBLIC                                                            #
     # ------------------------------------------------------------------ #
 
     def get_candidates(self, state: GameStateHex, heuristic_fn, is_maximizing: bool):
@@ -54,7 +53,6 @@ class CandidateGenerator:
             h_val = heuristic_fn(next_state)
             scored.append((action, next_state, h_val))
 
-        # Fallback: if filtering left nothing, use all available actions
         if not scored:
             for action in state.generate_possible_stateless_actions():
                 next_state = state.apply_action(action)
@@ -70,31 +68,35 @@ class CandidateGenerator:
 
     def _get_considered_tiles(self, state: GameStateHex) -> set:
         """
-        Compute relevant candidate positions from the current board:
-        - Ring 1+2 around OWN pieces       (aggressive + connective play)
-        - Ring 1 around THREATENING pieces  (defensive play)
-        - Cells on OPPONENT'S shortest path (critical blocking moves)
-
-        Computed fresh at each node so branches don't contaminate each other.
+        Enhanced candidate generator that recognizes:
+        - Standard neighborhood expansion (R1+R2)
+        - Bridge formation (Virtual Connections)
+        - Bridge interference (Blocking opponent virtual connections)
+        - Critical shortest path intercepts
         """
         considered = set()
         env = state.rep.env
 
+        BRIDGE_OFFSETS = [(-1, 2), (1, 1), (2, -1), (1, -2), (-1, -1), (-2, 1)]
+
         my_tiles  = [t for t, p in env.items() if p.get_type() == self._piece_type]
         opp_tiles = [t for t, p in env.items() if p.get_type() == self._opp_type]
 
-        # Ring 1+2 around own pieces
         for tile in my_tiles:
             for di, dj in HEX_NEIGHBORS:
                 r1 = (tile[0] + di, tile[1] + dj)
                 if self._in_bounds(r1) and r1 not in env:
                     considered.add(r1)
-                for di2, dj2 in HEX_NEIGHBORS:
-                    r2 = (r1[0] + di2, r1[1] + dj2)
-                    if self._in_bounds(r2) and r2 not in env:
-                        considered.add(r2)
+                    for di2, dj2 in HEX_NEIGHBORS:
+                        r2 = (r1[0] + di2, r1[1] + dj2)
+                        if self._in_bounds(r2) and r2 not in env:
+                            considered.add(r2)
 
-        # Ring 1 only around threatening opponent pieces
+            for bi, bj in BRIDGE_OFFSETS:
+                b_tile = (tile[0] + bi, tile[1] + bj)
+                if self._in_bounds(b_tile) and b_tile not in env:
+                    considered.add(b_tile)
+
         for tile in opp_tiles:
             if self._is_threatening(tile, env):
                 for di, dj in HEX_NEIGHBORS:
@@ -102,9 +104,16 @@ class CandidateGenerator:
                     if self._in_bounds(r1) and r1 not in env:
                         considered.add(r1)
 
-        # Always include cells on the opponent's shortest path
-        # This guarantees we never miss a critical blocking move
+                for bi, bj in BRIDGE_OFFSETS:
+                    b_tile = (tile[0] + bi, tile[1] + bj)
+                    if self._in_bounds(b_tile) and b_tile not in env:
+                        considered.add(b_tile)
+
         considered |= self._get_shortest_path_cells(state, self._opp_type)
+
+        center = (self._board_dim // 2, self._board_dim // 2)
+        if not considered and center not in env:
+            considered.add(center)
 
         return considered
 
@@ -116,7 +125,6 @@ class CandidateGenerator:
         - It is in the middle zone of the board (rows/cols 3 to dim-3)
           meaning it is advanced enough to matter even if isolated
         """
-        # Touching goal edge
         if self._opp_type == "R":
             if tile[0] == 0 or tile[0] == self._board_dim - 1:
                 return True
@@ -124,13 +132,11 @@ class CandidateGenerator:
             if tile[1] == 0 or tile[1] == self._board_dim - 1:
                 return True
 
-        # Connected to another opponent piece
         for di, dj in HEX_NEIGHBORS:
             neighbor = (tile[0] + di, tile[1] + dj)
             if neighbor in env and env[neighbor].get_type() == self._opp_type:
                 return True
 
-        # Advanced enough to be a real threat even if isolated
         if self._opp_type == "R":
             if 3 <= tile[0] <= self._board_dim - 3:
                 return True
@@ -195,14 +201,13 @@ class CandidateGenerator:
                     prev[(ni, nj)] = (i, j)
                     heappush(heap, (new_dist, (ni, nj)))
 
-        # Backtrack from goal to collect empty cells on the path
         path_cells = set()
         if goal is None:
             return path_cells
 
         current = goal
         while current in prev:
-            if env.get(current) is None:  # only empty cells are blockable
+            if env.get(current) is None:
                 path_cells.add(current)
             current = prev[current]
 

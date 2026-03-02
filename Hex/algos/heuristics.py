@@ -1,6 +1,19 @@
 """
 Heuristic module for Hex AI player.
-Contains all evaluation logic: aggressive, defensive, and connective scores.
+
+Core philosophy: a human plays Hex by asking two questions:
+  1. How close am I to winning?
+  2. How close is the opponent to winning?
+
+The answer to both is the Dijkstra shortest path distance.
+The difference is the only signal that matters.
+
+Everything else (bridges, edge control, connectivity bonuses) adds
+noise that confuses the search more than it helps.
+
+One exception: an URGENT THREAT bonus. If the opponent is 1 move from
+winning, the defensive score spikes massively — mirroring how a human
+immediately drops everything to block a winning threat.
 """
 
 import math
@@ -12,12 +25,14 @@ HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 
 class HexHeuristic:
     """
-    Evaluates a Hex board state from the perspective of a given player.
+    Evaluates a Hex board position as:
 
-    Combines three components:
-    - Aggressive: how close YOU are to winning (shorter path = better)
-    - Defensive:  how far OPPONENT is from winning (longer path = better)
-    - Connective: how well YOUR pieces are linked together
+        score = opp_dist - my_dist
+
+    Normalized to [-1, 1]. Positive = we are ahead. Negative = opponent ahead.
+
+    Special case: if opponent is 1 move from winning, return a large
+    negative value to force an immediate block regardless of our own progress.
     """
 
     def __init__(self, piece_type: str, board_dim: int = 14):
@@ -27,82 +42,42 @@ class HexHeuristic:
 
     def evaluate(self, state: GameStateHex) -> float:
         """
-        Main entry point. Returns a score in [-inf, inf]:
-        - float('inf')  = player has won
-        - float('-inf') = player has lost
-        - values in [0, 1] otherwise
+        Returns a score in [-inf, inf].
+        Positive = good for us. Negative = good for opponent.
         """
         if state.is_done():
-            my_score = state.scores.get(
-                self._get_player_id(state, self._piece_type), 0
-            )
-            return float('inf') if my_score == 1 else float('-inf')
+            my_id = self._get_player_id(state, self._piece_type)
+            return float('inf') if state.scores.get(my_id, 0) == 1 else float('-inf')
 
-        w_aggressive = 0.5
-        w_defensive  = 0.3
-        w_connective = 0.2
+        my_dist  = self._dijkstra(state, self._piece_type)
+        opp_dist = self._dijkstra(state, self._opp_type)
 
-        agg  = self._aggressive_score(state)
-        defe = self._defensive_score(state)
-        conn = self._connective_score(state)
+        # --- URGENT THREAT: opponent is 1 move from winning ---
+        # A human ALWAYS blocks this. Score tanks to force a block.
+        if opp_dist <= 1:
+            return -0.9
 
-        return w_aggressive * agg + w_defensive * defe + w_connective * conn
+        # --- WE ARE 1 MOVE FROM WINNING ---
+        if my_dist <= 1:
+            return 0.9
 
-    # ------------------------------------------------------------------ #
-    #  HEURISTIC 1 - AGGRESSIVE                                            #
-    #  Shortest path for YOU. Score in [0,1]: 1 = already connected.      #
-    # ------------------------------------------------------------------ #
-
-    def _aggressive_score(self, state: GameStateHex) -> float:
-        dist = self._dijkstra(state, self._piece_type)
-        if dist == 0:
+        # --- NORMAL CASE: path differential ---
+        # opp_dist - my_dist: positive means we need fewer moves = we are ahead
+        # Normalize by board_dim so result is in roughly [-1, 1]
+        if my_dist == math.inf and opp_dist == math.inf:
+            return 0.0
+        if my_dist == math.inf:
+            return -1.0
+        if opp_dist == math.inf:
             return 1.0
-        if dist == math.inf:
-            return 0.0
-        return 1.0 - (dist / self._board_dim)
+
+        diff = opp_dist - my_dist
+        # Normalize: max possible diff is board_dim in either direction
+        return max(-1.0, min(1.0, diff / self._board_dim))
 
     # ------------------------------------------------------------------ #
-    #  HEURISTIC 2 - DEFENSIVE                                             #
-    #  Shortest path for OPPONENT. Score in [0,1]: 1 = fully blocked.     #
-    # ------------------------------------------------------------------ #
-
-    def _defensive_score(self, state: GameStateHex) -> float:
-        dist = self._dijkstra(state, self._opp_type)
-        if dist == math.inf:
-            return 1.0
-        if dist == 0:
-            return 0.0
-        return dist / self._board_dim
-
-    # ------------------------------------------------------------------ #
-    #  HEURISTIC 3 - CONNECTIVE                                            #
-    #  Fraction of YOUR pieces with at least one friendly neighbor.        #
-    #  Score in [0,1]: 1 = all pieces connected to at least one other.    #
-    # ------------------------------------------------------------------ #
-
-    def _connective_score(self, state: GameStateHex) -> float:
-        my_pieces = [
-            tile for tile, piece in state.rep.env.items()
-            if piece.get_type() == self._piece_type
-        ]
-
-        if not my_pieces:
-            return 0.0
-
-        connected_count = 0
-        for tile in my_pieces:
-            for di, dj in HEX_NEIGHBORS:
-                neighbor = (tile[0] + di, tile[1] + dj)
-                if (neighbor in state.rep.env
-                        and state.rep.env[neighbor].get_type() == self._piece_type):
-                    connected_count += 1
-                    break  # count each piece at most once
-
-        return connected_count / len(my_pieces)
-
-    # ------------------------------------------------------------------ #
-    #  DIJKSTRA                                                            #
-    #  Own pieces cost 0, empty cells cost 1, opponent = impassable.      #
+    #  DIJKSTRA                                                          #
+    #  Own pieces cost 0, empty cells cost 1, opponent = impassable.     #
     # ------------------------------------------------------------------ #
 
     def _dijkstra(self, state: GameStateHex, piece_type: str) -> float:
@@ -122,7 +97,7 @@ class HexHeuristic:
             cell = env.get(tile)
             if cell is not None and cell.get_type() != piece_type:
                 continue
-            cost = 0 if (cell is not None) else 1
+            cost = 0 if cell is not None else 1
             if cost < dist.get(tile, math.inf):
                 dist[tile] = cost
                 heappush(heap, (cost, tile))
@@ -140,7 +115,7 @@ class HexHeuristic:
                 cell = env.get((ni, nj))
                 if cell is not None and cell.get_type() != piece_type:
                     continue
-                step = 0 if (cell is not None) else 1
+                step = 0 if cell is not None else 1
                 new_dist = d + step
                 if new_dist < dist.get((ni, nj), math.inf):
                     dist[(ni, nj)] = new_dist
@@ -153,7 +128,6 @@ class HexHeuristic:
     # ------------------------------------------------------------------ #
 
     def _get_player_id(self, state: GameStateHex, piece_type: str):
-        """Get player ID matching the given piece type from the game state."""
         for player in state.players:
             if player.get_piece_type() == piece_type:
                 return player.get_id()
