@@ -15,7 +15,6 @@ from datetime import datetime
 
 HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 
-
 class MyPlayer(PlayerHex):
     """
     Minimax player for Hex with:
@@ -27,8 +26,8 @@ class MyPlayer(PlayerHex):
 
     def __init__(self, piece_type: str, name: str = "MyPlayer"):
         super().__init__(piece_type, name)
-        self._max_depth = 4
-        self._search_width = 6
+        self._max_depth = 3
+        self._search_width = 9
         self._board_dim = 14
         self._iteration = 0
         os.makedirs("./benchmarks", exist_ok=True)
@@ -50,6 +49,7 @@ class MyPlayer(PlayerHex):
             return opening_action
     
         best_action = self._run_minimax(current_state)
+
         self._log_time(start_time)
         return best_action
     
@@ -120,8 +120,15 @@ class MyPlayer(PlayerHex):
     def _get_candidates(self, state, is_maximizing):
         return self._candidates.get_candidates(state, self.heuristic, is_maximizing)
 
-    def heuristic(self, state: GameStateHex) -> float:
-        return self._heuristic.evaluate(state)
+    def heuristic(self, state):
+        key = hash(frozenset((t, p.get_type()) for t, p in state.rep.env.items()))
+        if key in self._tt:
+            self._tt_hits += 1
+            return self._tt[key]
+        self._tt_misses += 1
+        val = self._heuristic.evaluate(state)
+        self._tt[key] = val
+        return val
 
     def _log_time(self, start_time):
        elapsed = time.perf_counter() - start_time
