@@ -6,14 +6,14 @@ from game_state_hex import GameStateHex
 
 from colorama import Fore, Back, Style
 
-from algos.heuristics import HexHeuristicDjikstra
-from algos.candidates import CandidateGenerator
-from algos.openings import Openings
-
 import os
 import csv
 import time
 from datetime import datetime
+
+from src_2204548.candidates import CandidateGenerator
+from src_2204548.heuristics import HexHeuristicDjikstra
+from src_2204548.openings import Openings
 
 HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 DEBUG = False
@@ -33,7 +33,7 @@ class MyPlayer(PlayerHex):
         self._search_width = 12
         self._board_dim = 14
         self._iteration = 0
-        os.makedirs("./benchmarks", exist_ok=True)
+        #os.makedirs("./benchmarks", exist_ok=True)
         self._timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._opp_type = "B" if piece_type == "R" else "R"
         self._heuristic = HexHeuristicDjikstra(piece_type, board_dim=14)
@@ -48,7 +48,7 @@ class MyPlayer(PlayerHex):
         
         opening_action = self._try_opening(current_state)
         if opening_action is not None:
-            self._log_time(start_time)
+            #self._log_time(start_time)
             return opening_action
         
         if DEBUG:
@@ -57,7 +57,7 @@ class MyPlayer(PlayerHex):
     
         best_action = self._run_minimax(current_state)
 
-        self._log_time(start_time)
+        #self._log_time(start_time)
         return best_action
     
     def _track_opponent_move(self, current_state: GameStateHex):
@@ -182,3 +182,4 @@ class MyPlayer(PlayerHex):
                     print(". ", end="")
             print()  # Newline
         print("---------------------------------------\n")
+

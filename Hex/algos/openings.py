@@ -26,13 +26,13 @@ class Openings:
 
         if self._piece_type == "R":
             sequence = [
-                (6, 7),
                 (7, 7),
+                (6, 7),
             ]
         else:
             sequence = [
-                (7, 6),  
-                (7, 7),   
+                (7, 7),
+                (7, 6),    
             ]
 
         for move in sequence:

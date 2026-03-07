@@ -1,0 +1,4 @@
+colorama
+seahorse>=1.2.3
+numpy
+scipy
