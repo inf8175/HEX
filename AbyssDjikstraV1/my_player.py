@@ -158,28 +158,22 @@ class MyPlayer(PlayerHex):
         env = state.rep.env
         dim = state.rep.dimensions
 
-        # Purple ANSI codes (some consoles prefer Magenta for Purple)
         PURPLE = '\033[95m'
         RESET = Style.RESET_ALL
 
         print("\n--- DEBUG: CANDIDATE TILES (Purple) ---")
         for i in range(dim[0]):
-            # The 'Hex Slant'
             print(" " * i, end="")
             for j in range(dim[1]):
                 pos = (i, j)
                 if pos in env:
-                    # Existing pieces
                     char = "⬢"
                     color = Fore.RED if env[pos].get_type() == "R" else Fore.BLUE
                     print(f"{color}{char}{RESET} ", end="")
                 elif pos in candidates_set:
-                    # THIS IS A CANDIDATE
-                    # Using '?' or 'c' to represent a considered tile
                     print(f"{PURPLE}c{RESET} ", end="")
                 else:
-                    # Empty but not considered
                     print(". ", end="")
-            print()  # Newline
+            print() 
         print("---------------------------------------\n")
 

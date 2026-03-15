@@ -6,10 +6,6 @@ HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 
 
 class HexHeuristicDjikstra:
-    """
-    Evaluates a Hex board position using Dijkstra shortest path.
-    Positive = good for us. Negative = good for opponent.
-    """
 
     def __init__(self, piece_type: str, board_dim: int = 14):
         self._piece_type = piece_type
@@ -17,7 +13,6 @@ class HexHeuristicDjikstra:
         self._board_dim = board_dim
 
     def evaluate(self, state: GameStateHex) -> float:
-        """Returns score in [-inf, inf]. Positive = good for us."""
         if state.is_done():
             my_id = self._get_player_id(state, self._piece_type)
             return float('inf') if state.scores.get(my_id, 0) == 1 else float('-inf')
@@ -25,14 +20,12 @@ class HexHeuristicDjikstra:
         my_dist = self._dijkstra(state, self._piece_type)
         opp_dist = self._dijkstra(state, self._opp_type)
 
-        # Urgent threat detection
         if opp_dist <= 1:
             return -0.9
         
         if my_dist <= 1:
             return 0.9
 
-        # Normal case: path differential
         if my_dist == math.inf and opp_dist == math.inf:
             return 0.0
         if my_dist == math.inf:
@@ -44,7 +37,6 @@ class HexHeuristicDjikstra:
         return max(-1.0, min(1.0, diff / self._board_dim))
 
     def _dijkstra(self, state: GameStateHex, piece_type: str) -> float:
-        """Shortest path using Dijkstra. Own pieces cost 0, empty cost 1, opponent = blocked."""
         dim = self._board_dim
         env = state.rep.env
         dist = {}

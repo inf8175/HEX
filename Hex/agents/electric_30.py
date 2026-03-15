@@ -1,47 +1,3 @@
-"""
-MyPlayer — Hex AI with:
-  - Iterative Deepening (ID-alpha-beta) with a wall-clock time budget
-  - Zobrist hashing + Transposition Table (exact / lower / upper bounds)
-  - Theory-based opening book
-  - Heuristic-ordered candidate moves (unchanged from original)
-
-Iterative Deepening strategy
------------------------------
-We search depth 1, 2, 3, … until the time budget is exhausted or a
-terminal state is proven.  The best move from depth d seeds move ordering
-for depth d+1 (killer heuristic via candidate pre-sorting).
-
-Time budget
------------
-seahorse passes remaining_time (total seconds left for the whole game) into
-compute_action().  We derive a dynamic per-move budget:
-
-    budget = clamp((remaining_time - SAFETY_MARGIN) / MOVES_REMAINING_ESTIMATE,
-                   MIN_BUDGET_SECONDS, MAX_BUDGET_SECONDS)
-
-This means early in the game (lots of time left) we spend ~15 s/move;
-late in the game the budget shrinks proportionally, always keeping a 10 s
-safety margin so we are never disqualified.
-
-If a deeper ID iteration would exceed the budget, we return the best move
-found so far.  This is safe because ID always has a complete result from
-the previous depth.
-
-Maximum depth cap
------------------
-At most 98 plies are available per player on a 14×14 board (196 cells / 2).
-We cap at MAX_DEPTH_CAP = 12 to avoid pointless deep searches in endgame.
-In practice the time budget cuts out far earlier.
-
-Transposition Table integration (alpha-beta + TT)
---------------------------------------------------
-Standard technique:
-  - On entry: if TT hit at depth ≥ current depth, use stored bound.
-  - On exit:  store EXACT if value is inside (alpha, beta),
-              LOWER  if we caused a beta cut (value ≥ beta),
-              UPPER  if value ≤ alpha (all moves failed low).
-"""
-
 import math
 import time
 from datetime import datetime
@@ -62,41 +18,15 @@ from superAlgos.zobrist import TT_EXACT, TT_LOWER, TT_UPPER
 HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 DEBUG         = True
 
-# Time management
-# ---------------
-# Total budget per game: 900 s.  A full game is ~50 moves per player.
-# We derive a per-move budget from remaining_time (passed by seahorse):
-#
-#   per_move_budget = (remaining_time - SAFETY_MARGIN) / MOVES_REMAINING_ESTIMATE
-#
-# clamped to [MIN_BUDGET_SECONDS, MAX_BUDGET_SECONDS].
-#
-# Effective branching with width=12 + alpha-beta ≈ sqrt(12) ≈ 3.5.
-# Dijkstra on 14x14 ≈ 0.1 ms, so:
-#   depth 4 → ~150 nodes  → ~15 ms
-#   depth 5 → ~525 nodes  → ~50 ms
-#   depth 6 → ~1800 nodes → ~180 ms
-#   depth 7 → ~6300 nodes → ~630 ms
-# The time guard aborts any depth that overruns.
 
-# Budget strategy:
-#   900s / ~50 moves per game = 18s average.
-#   We spend up to 20s early (lots of time), shrinking as clock drains.
-#   The old depth=4 width=12 baseline costs ~0.1-0.5s/move — far too cheap.
-#   With width=12 and alpha-beta, depth=5 costs ~0.05s and depth=6 ~0.2s,
-#   depth=7 ~0.7s. Spending up to 20s means we reliably reach depth 7-8,
-#   which is strictly deeper than the baseline's fixed depth=4.
-MIN_BUDGET_SECONDS       = 0.2    # floor: always spend at least 5s
-MAX_BUDGET_SECONDS       = 15.0   # ceiling: up to 20s early game
-SAFETY_MARGIN            = 5.0   # keep 15s in reserve (disqualification guard)
-MAX_DEPTH_CAP            = 12     # hard depth ceiling
-MIN_DEPTH                = 2      # always finish at least this depth
+MIN_BUDGET_SECONDS       = 0.2   
+MAX_BUDGET_SECONDS       = 15.0  
+SAFETY_MARGIN            = 5.0   
+MAX_DEPTH_CAP            = 12     
+MIN_DEPTH                = 2    
 
 
 class MyPlayer(PlayerHex):
-    """
-    Minimax player for Hex with iterative deepening, Zobrist TT, and openings.
-    """
 
     def __init__(self, piece_type: str, name: str = "MyPlayer"):
         super().__init__(piece_type, name)
@@ -110,12 +40,9 @@ class MyPlayer(PlayerHex):
         self._tt              = TranspositionTable(max_size=1_000_000)
         self._last_opp_move   = None
         self._prev_positions  = set()
-        self._deadline        = 0.0   # set at start of each compute_action()
+        self._deadline        = 0.0 
         self._time_exceeded   = False
 
-    # ------------------------------------------------------------------ #
-    #  Entry point                                                        #
-    # ------------------------------------------------------------------ #
 
     def compute_action(self, current_state: GameStateHex, remaining_time: float = 900.0, **kwargs) -> Action:
         budget = self._compute_budget(current_state, remaining_time)
@@ -133,12 +60,9 @@ class MyPlayer(PlayerHex):
             considered_set = self._candidates._get_considered_tiles(current_state)
             self.debug_print_candidates(current_state, considered_set)
 
-        # 2. Iterative deepening
         return self._iterative_deepening(current_state)
 
-    # ------------------------------------------------------------------ #
-    #  Time budget                                                         #
-    # ------------------------------------------------------------------ #
+    
 
     def _compute_budget(self, state: GameStateHex, remaining_time: float) -> float:
         if state.get_step() < 2:
@@ -153,17 +77,11 @@ class MyPlayer(PlayerHex):
         if spendable <= 0:
             return MIN_BUDGET_SECONDS
 
-        # Sqrt weighting: late moves get proportionally more time.
-        # Sum of sqrt(1) + sqrt(2) + ... + sqrt(N) ≈ (2/3) * N^(3/2)
-        # Each move's share = sqrt(moves_remaining) / sum_of_remaining_sqrts
         sum_sqrts = (2 / 3) * (moves_remaining ** 1.5)
         budget = spendable * (math.sqrt(moves_remaining) / sum_sqrts)
 
         return min(MAX_BUDGET_SECONDS, max(MIN_BUDGET_SECONDS, budget))
 
-    # ------------------------------------------------------------------ #
-    #  Opponent tracking                                                   #
-    # ------------------------------------------------------------------ #
 
     def _track_opponent_move(self, current_state: GameStateHex):
         step        = current_state.get_step()
@@ -173,9 +91,7 @@ class MyPlayer(PlayerHex):
             self._last_opp_move = new_pos.pop() if new_pos else None
         self._prev_positions = current_pos
 
-    # ------------------------------------------------------------------ #
-    #  Opening book                                                        #
-    # ------------------------------------------------------------------ #
+  
 
     def _try_opening(self, current_state: GameStateHex) -> Optional[Action]:
         step     = current_state.get_step()
@@ -188,25 +104,11 @@ class MyPlayer(PlayerHex):
         for action in current_state.generate_possible_stateless_actions():
             if action.data["position"] == move:
                 return action
-        # Desired cell taken — exit opening book
         self._opening_book._in_opening = False
         return None
 
-    # ------------------------------------------------------------------ #
-    #  Iterative deepening                                                 #
-    # ------------------------------------------------------------------ #
 
     def _iterative_deepening(self, current_state: GameStateHex) -> Action:
-        """
-        Search depth 1 … MAX_DEPTH_CAP, returning the best action found
-        before the time budget expires.
-
-        Move ordering across iterations:
-          The candidate generator already sorts by heuristic value.
-          After each completed depth, the best action is tried first at
-          the next depth (we prepend it to the candidate list).
-        """
-        # Fallback: pick any candidate
         initial_candidates = list(self._get_candidates(current_state, is_maximizing=True))
         if not initial_candidates:
             return next(current_state.generate_possible_stateless_actions())
@@ -217,17 +119,15 @@ class MyPlayer(PlayerHex):
 
         for depth in range(MIN_DEPTH, MAX_DEPTH_CAP + 1):
             if time.perf_counter() >= self._deadline:
-                break   # budget gone before starting this depth
+                break  
 
             self._time_exceeded = False
             iteration_best_action = best_action
             iteration_best_val    = -math.inf
             iter_start = time.perf_counter()
 
-            # Re-generate candidates so the TT can reorder them
             candidates = list(self._get_candidates(current_state, is_maximizing=True))
 
-            # Move the previous iteration's best to the front (root move ordering)
             candidates = self._prioritise_best(candidates, best_action)
 
             for action, next_state, _ in candidates:
@@ -250,7 +150,6 @@ class MyPlayer(PlayerHex):
                     iteration_best_val    = val
                     iteration_best_action = action
 
-            # Only commit results from a *fully completed* iteration
             if not self._time_exceeded:
                 best_action = iteration_best_action
                 best_val    = iteration_best_val
@@ -259,7 +158,6 @@ class MyPlayer(PlayerHex):
             else:
                 print(f"[ID] depth={depth} ABORTED (time)  returning depth={depth-1} result")
 
-            # Early exit: proven win
             if best_val == math.inf:
                 break
 
@@ -267,7 +165,6 @@ class MyPlayer(PlayerHex):
 
     @staticmethod
     def _prioritise_best(candidates, best_action):
-        """Move best_action to the front of the candidate list."""
         for i, (action, state, val) in enumerate(candidates):
             if action is best_action or (
                 action.data["position"] == best_action.data["position"]
@@ -275,9 +172,6 @@ class MyPlayer(PlayerHex):
                 return [candidates[i]] + candidates[:i] + candidates[i + 1:]
         return candidates
 
-    # ------------------------------------------------------------------ #
-    #  Alpha-beta minimax with transposition table                        #
-    # ------------------------------------------------------------------ #
 
     def _minimax(
         self,
@@ -288,22 +182,13 @@ class MyPlayer(PlayerHex):
         is_maximizing: bool,
         h:            int,
     ) -> float:
-        """
-        Alpha-beta minimax with Zobrist TT.
-
-        h is the Zobrist hash of `state` passed from the parent to avoid
-        recomputing it from scratch at every node.
-        """
-        # --- Time check ---
         if time.perf_counter() >= self._deadline:
             self._time_exceeded = True
             return self.heuristic(state)
 
-        # --- Terminal / leaf ---
         if state.is_done() or depth == 0:
             return self.heuristic(state)
 
-        # --- Transposition table lookup ---
         orig_alpha = alpha
         orig_beta  = beta
         entry: Optional[TTEntry] = self._tt.lookup(h)
@@ -317,13 +202,8 @@ class MyPlayer(PlayerHex):
             if alpha >= beta:
                 return entry.value
 
-        # --- Recurse ---
-        # Use the scored (Dijkstra) generator — this gives good move ordering
-        # which is critical for alpha-beta cutoffs. The TT cuts duplicate
-        # subtrees; Dijkstra ordering makes alpha-beta effective within each subtree.
         candidates = self._get_candidates(state, is_maximizing)
 
-        # Determine whose piece is being placed at this node.
         mover = self.piece_type if is_maximizing else self._opp_type
 
         if is_maximizing:
@@ -351,7 +231,6 @@ class MyPlayer(PlayerHex):
                 if beta <= alpha:
                     break
 
-        # --- Store in TT (only if time was not exceeded mid-search) ---
         if not self._time_exceeded:
             if best_val <= orig_alpha:
                 flag = TT_UPPER
@@ -363,9 +242,6 @@ class MyPlayer(PlayerHex):
 
         return best_val
 
-    # ------------------------------------------------------------------ #
-    #  Helpers                                                             #
-    # ------------------------------------------------------------------ #
 
     def _get_candidates(self, state, is_maximizing):
         return self._candidates.get_candidates(state, self.heuristic, is_maximizing)
@@ -373,9 +249,6 @@ class MyPlayer(PlayerHex):
     def heuristic(self, state):
         return self._heuristic.evaluate(state)
 
-    # ------------------------------------------------------------------ #
-    #  Debug                                                               #
-    # ------------------------------------------------------------------ #
 
     def debug_print_candidates(self, state: GameStateHex, candidates_set: set):
         env   = state.rep.env

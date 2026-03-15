@@ -19,13 +19,6 @@ HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 DEBUG = False
 
 class MyPlayer(PlayerHex):
-    """
-    Minimax player for Hex with:
-    - Local considered_tiles per node (radius-2 expansion around all pieces)
-    - Search width limiting with heuristic-based move ordering
-    - Alpha-beta pruning
-    - Three-component heuristic: aggressive, defensive, connective
-    """
 
     def __init__(self, piece_type: str, name: str = "MyPlayer"):
         super().__init__(piece_type, name)
@@ -61,7 +54,6 @@ class MyPlayer(PlayerHex):
         return best_action
     
     def _track_opponent_move(self, current_state: GameStateHex):
-        """Update prev_positions and detect opponent's last move."""
         step = current_state.get_step()
         current_pos = set(current_state.rep.env.keys())
         if step > 0:
@@ -81,10 +73,6 @@ class MyPlayer(PlayerHex):
         return None
     
     def _run_minimax(self, current_state: GameStateHex) -> Action:
-        """
-        Run minimax search and return the best action found.
-        Guaranteed to return something via the fallback.
-        """
         best_action = next(current_state.generate_possible_stateless_actions(), None)
         best_val = -math.inf
     
