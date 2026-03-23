@@ -12,8 +12,6 @@ from colorama import Fore, Style
 from superAlgos.heuristics import HexHeuristicDjikstra
 from superAlgos.candidates import CandidateGenerator
 from superAlgos.openings import Openings
-from superAlgos.zobrist import ZobristTable, TranspositionTable, TTEntry
-from superAlgos.zobrist import TT_EXACT, TT_LOWER, TT_UPPER
 
 HEX_NEIGHBORS = [(-1, 1), (-1, 0), (1, -1), (1, 0), (0, -1), (0, 1)]
 DEBUG         = True
@@ -37,8 +35,6 @@ class MyPlayer(PlayerHex):
         self._heuristic       = HexHeuristicDjikstra(self.piece_type, board_dim=14)
         self._candidates      = CandidateGenerator(self.piece_type, board_dim=14, search_width=self._search_width)
         self._opening_book    = Openings(self.piece_type)
-        self._zobrist         = ZobristTable(board_dim=14)
-        self._tt              = TranspositionTable(max_size=1_000_000)
         self._last_opp_move   = None
         self._prev_positions  = set()
         self._deadline        = 0.0 
@@ -101,7 +97,6 @@ class MyPlayer(PlayerHex):
 
         best_action = initial_candidates[0][0]
         best_val    = -math.inf
-        root_hash   = self._zobrist.hash_state(current_state)
 
         for depth in range(MIN_DEPTH, MAX_DEPTH_CAP + 1):
             if time.perf_counter() >= self._deadline:
@@ -122,16 +117,10 @@ class MyPlayer(PlayerHex):
                     self._time_exceeded = True
                     break
 
-                child_hash = self._zobrist.update(
-                    root_hash,
-                    self.piece_type,
-                    action.data["position"],
-                )
                 val = self._minimax(
                     next_state, depth - 1,
                     -math.inf, math.inf,
                     is_maximizing=False,
-                    h=child_hash,
                 )
                 if val > iteration_best_val:
                     iteration_best_val    = val
@@ -166,8 +155,7 @@ class MyPlayer(PlayerHex):
         depth:        int,
         alpha:        float,
         beta:         float,
-        is_maximizing: bool,
-        h:            int,
+        is_maximizing: bool
     ) -> float:
         if time.perf_counter() >= self._deadline:
             self._time_exceeded = True
@@ -176,56 +164,31 @@ class MyPlayer(PlayerHex):
         if state.is_done() or depth == 0:
             return self.heuristic(state)
 
-        orig_alpha = alpha
-        orig_beta  = beta
-        entry: Optional[TTEntry] = self._tt.lookup(h)
-        if entry is not None and entry.depth >= depth:
-            if entry.flag == TT_EXACT:
-                return entry.value
-            elif entry.flag == TT_LOWER:
-                alpha = max(alpha, entry.value)
-            elif entry.flag == TT_UPPER:
-                beta  = min(beta,  entry.value)
-            if alpha >= beta:
-                return entry.value
-
         candidates = self._get_candidates(state, is_maximizing)
-
-        mover = self.piece_type if is_maximizing else self._opp_type
 
         if is_maximizing:
             best_val = -math.inf
-            for action, next_state, _ in candidates:
+            for _, next_state, _ in candidates:
                 if time.perf_counter() >= self._deadline:
                     self._time_exceeded = True
                     break
-                child_h = self._zobrist.update(h, mover, action.data["position"])
-                val     = self._minimax(next_state, depth - 1, alpha, beta, False, child_h)
+
+                val     = self._minimax(next_state, depth - 1, alpha, beta, False)
                 best_val = max(best_val, val)
                 alpha    = max(alpha, val)
                 if beta <= alpha:
                     break
         else:
             best_val = math.inf
-            for action, next_state, _ in candidates:
+            for _, next_state, _ in candidates:
                 if time.perf_counter() >= self._deadline:
                     self._time_exceeded = True
                     break
-                child_h = self._zobrist.update(h, mover, action.data["position"])
-                val     = self._minimax(next_state, depth - 1, alpha, beta, True, child_h)
+                val     = self._minimax(next_state, depth - 1, alpha, beta, True)
                 best_val = min(best_val, val)
                 beta     = min(beta, val)
                 if beta <= alpha:
                     break
-
-        if not self._time_exceeded:
-            if best_val <= orig_alpha:
-                flag = TT_UPPER
-            elif best_val >= orig_beta:
-                flag = TT_LOWER
-            else:
-                flag = TT_EXACT
-            self._tt.store(h, best_val, depth, flag)
 
         return best_val
 
